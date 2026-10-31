@@ -5,7 +5,7 @@ import socket
 import RPi.GPIO as GPIO
 
 # --- PIN TANIMLAMALARI ---
-BTN_MODE_PIN = 17   # Mod değiştirme butonu
+BTN_MODE_PIN = 4   # Mod değiştirme butonu
 BTN_ACTION_PIN = 16 # Mod içi aksiyon / tetik butonu
 
 # --- GPIO AYARLARI ---
