@@ -2,6 +2,9 @@ import os
 import time
 import subprocess
 import socket
+import re
+import tkinter as tk
+from tkinter import font
 import RPi.GPIO as GPIO
 
 # --- PIN TANIMLAMALARI ---
@@ -13,111 +16,118 @@ GPIO.setmode(GPIO.BCM)
 GPIO.setup(BTN_MODE_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 GPIO.setup(BTN_ACTION_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
 
-# --- MODLAR ---
 MODES = [
-    "1. IP & KABLO TESTI",
+    "1. ETHERNET & IP TESTI",
     "2. RF TUNER MODU",
     "3. CCTV ANLIK TEST"
 ]
 current_mode_idx = 0
 active_process = None
 
-def clear_screen():
-    os.system('clear')
+class MultiBoxApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.attributes('-fullscreen', True)  # Tam ekran büyük görünüm
+        self.root.configure(bg='#1e1e1e')
 
-def draw_interface():
-    clear_screen()
-    print("=" * 66)
-    print("  M U L T I B O X   D I A G N O S T I C   S Y S T E M  ")
-    print("=" * 66)
-    print("\n")
-    print(f"   >>> AKTIF MOD: [ {MODES[current_mode_idx]} ] <<<   ")
-    print("\n")
-    print("-" * 66)
-    print("  [ Buton 1 (GPIO 17) ] ---> Modu Degistir")
-    print("  [ Buton 2 (GPIO 27) ] ---> Baslat / Islem Yap / Geri Don")
-    print("=" * 66)
+        # Büyük font tanımları
+        self.title_font = font.Font(family="Helvetica", size=22, weight="bold")
+        self.mode_font = font.Font(family="Helvetica", size=18, weight="bold")
+        self.content_font = font.Font(family="Courier", size=14)
 
-def execute_mode_action():
-    global active_process
-    if active_process and active_process.poll() is None:
-        active_process.terminate()
-        active_process = None
+        # Üst Başlık
+        self.lbl_title = tk.Label(root, text="MULTIBOX DIAGNOSTIC SYSTEM", font=self.title_font, fg="#00ffcc", bg="#1e1e1e")
+        self.lbl_title.pack(pady=20)
 
-    clear_screen()
-    print("=" * 66)
-    print(f"   CALISTIRILIYOR: {MODES[current_mode_idx]}")
-    print("=" * 66 + "\n")
+        # Aktف Mod Göstergesi
+        self.lbl_mode = tk.Label(root, text=f"AKTİF MOD: {MODES[current_mode_idx]}", font=self.mode_font, fg="#ffffff", bg="#333333", relief="solid", bd=2, padx=20, pady=10)
+        self.lbl_mode.pack(pady=10)
 
-    if current_mode_idx == 0:
-        ip = get_ip_address()
-        print(f"  > Cihaz IP Adresi : {ip}")
-        print("  > Ag Taramasi ve ARP Tablosu Kontrol Ediliyor...\n")
-        subprocess.run(["arp", "-a"])
-        print("\n  [!] Ana menüye dönmek için Buton 2'ye basın...")
-        
-        while True:
-            if GPIO.input(BTN_ACTION_PIN) == GPIO.LOW:
-                time.sleep(0.3)
-                break
-            time.sleep(0.05)
+        # İçerik Alanı (Bölünmüş Ekran Efekti İçin Çerçeve)
+        self.frame_content = tk.Frame(root, bg="#2b2b2b", bd=2, relief="groove")
+        self.frame_content.pack(fill="both", expand=True, padx=30, pady=20)
 
-    elif current_mode_idx == 1:
-        print("  > RF Tuner (Dark DK-AC-TVUSBDVBT2) Baslatiliyor...")
-        print("  > Tuner aktif. Çıkmak için Buton 2'ye basın.\n")
-        
-        while True:
-            if GPIO.input(BTN_ACTION_PIN) == GPIO.LOW:
-                time.sleep(0.3)
-                break
-            time.sleep(0.05)
+        self.lbl_content = tk.Label(self.frame_content, text="Modu başlatmak için Buton 2'ye basın.", font=self.content_font, fg="#00ff00", bg="#2b2b2b", justify="left")
+        self.lbl_content.pack(fill="both", expand=True, padx=20, pady=20)
 
-    elif current_mode_idx == 2:
-        print("  > CCTV Test Moduna Giriliyor...")
-        print("  > Kamera akışı başlatılıyor (Çıkış için Buton 2)...\n")
-        
+        # Alt Bilgi / Yönerge
+        self.lbl_footer = tk.Label(root, text="[Buton 1]: Mod Değiştir   |   [Buton 2]: Başlat / Seç", font=self.content_font, fg="#aaaaaa", bg="#1e1e1e")
+        self.lbl_footer.pack(pady=15)
+
+        # Donanım Butonlarını Dinlemek İçin Periyodik Kontrol (Polling)
+        self.check_buttons()
+
+    def update_interface(self):
+        self.lbl_mode.config(text=f"AKTİF MOD: {MODES[current_mode_idx]}")
+        self.lbl_content.config(text=f"Seçilen Mod: {MODES[current_mode_idx]}\n\nBaşlatmak için Buton 2'ye basın.")
+
+    def execute_action(self):
+        global active_process
+        if current_mode_idx == 0:
+            ip = get_ethernet_ip()
+            arp_data = get_arp_table()
+            text = f"=== ETHERNET DURUMU ===\nIP Adresi : {ip}\nDurum     : {'BAĞLI' if ip not in ['IP Alinamadi', 'Baglanti Yok'] else 'KABLO YOK'}\n\n=== ARP AĞ TARAMASI ===\n{arp_data}"
+            self.lbl_content.config(text=text)
+
+        elif current_mode_idx == 1:
+            self.lbl_content.config(text="> RF Tuner (Dark DK-AC-TVUSBDVBT2) Çalıştırılıyor...\n> Tuner aktif.")
+
+        elif current_mode_idx == 2:
+            self.lbl_content.config(text="> CCTV Test Modu Başlatılıyor...\n> Kamera akışı devrede.")
+            try:
+                active_process = subprocess.Popen([
+                    "ffplay", "-f", "v4l2", "-framerate", "30", 
+                    "-video_size", "720x576", "/dev/video0",
+                    "-infbuf", "-noautorotate", "-loglevel", "quiet"
+                ])
+            except Exception as e:
+                self.lbl_content.config(text=f"CCTV Hatası: {e}")
+
+    def check_buttons(self):
+        global current_mode_idx
         try:
-            active_process = subprocess.Popen([
-                "ffplay", "-f", "v4l2", "-framerate", "30", 
-                "-video_size", "720x576", "/dev/video0",
-                "-infbuf", "-noautorotate"
-            ])
-            
-            while active_process.poll() is None:
-                if GPIO.input(BTN_ACTION_PIN) == GPIO.LOW:
-                    active_process.terminate()
-                    break
-                time.sleep(0.05)
-                
+            # Mod Değiştirme Butonu (GPIO 17)
+            if GPIO.input(BTN_MODE_PIN) == GPIO.LOW:
+                current_mode_idx = (current_mode_idx + 1) % len(MODES)
+                self.update_interface()
+                time.sleep(0.3)
+
+            # Aksiyon Butonu (GPIO 27)
+            if GPIO.input(BTN_ACTION_PIN) == GPIO.LOW:
+                self.execute_action()
+                time.sleep(0.3)
         except Exception as e:
-            print(f"  > CCTV Hatası: {e}")
+            pass
 
-def get_ip_address():
+        # 50 milisaniyede bir butonları kontrol etmeye devam et
+        self.root.after(50, self.check_buttons)
+
+def get_ethernet_ip():
     try:
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-        s.close()
-        return ip
-    except:
+        output = subprocess.check_output(["ip", "-4", "addr", "show"]).decode()
+        sections = output.split('\n\n')
+        for sec in sections:
+            if any(iface in sec for iface in ['eth0', 'enx', 'enp']):
+                match = re.search(r'inet\s+(\d+\.\d+\.\d+\.\d+)', sec)
+                if match:
+                    return match.group(1)
+        match = re.search(r'inet\s+(\d+\.\d+\.\d+\.\d+)', output)
+        if match:
+            return match.group(1)
         return "IP Alinamadi"
+    except:
+        return "Baglanti Yok"
 
-# --- ANA DÖNGÜ ---
-draw_interface()
+def get_arp_table():
+    try:
+        return subprocess.check_output(["arp", "-a"]).decode()
+    except:
+        return "ARP bilgisi alınamadı."
 
+# --- UYGULAMA BAŞLAT ---
+root = tk.Tk()
+app = MultiBoxApp(root)
 try:
-    while True:
-        if GPIO.input(BTN_MODE_PIN) == GPIO.LOW:
-            current_mode_idx = (current_mode_idx + 1) % len(MODES)
-            draw_interface()
-            time.sleep(0.3)
-
-        if GPIO.input(BTN_ACTION_PIN) == GPIO.LOW:
-            execute_mode_action()
-            draw_interface()
-            time.sleep(0.3)
-
-        time.sleep(0.05)
-
+    root.mainloop()
 except KeyboardInterrupt:
     GPIO.cleanup()
